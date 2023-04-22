@@ -17,7 +17,9 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from Crypto.Util.number import getPrime, inverse
 from Crypto.Util.number import bytes_to_long, long_to_bytes
 from Crypto.Cipher import AES
+from Crypto.Cipher import Salsa20
 from Crypto.Util.Padding import pad
+from phe import paillier
 
 HOST = '127.0.0.1'
 
@@ -660,7 +662,7 @@ class Collector():
     def __init__(self, collector_index):
         self.collector_index = collector_index
        
-        with open(f"data/collector{collector_index}_private_key.pem", "rb") as f:
+        with open(f"data/collector1_private_key.pem", "rb") as f:
             pem_data = f.read()
             collector1_private_key = serialization.load_pem_private_key(
             pem_data,
@@ -673,6 +675,7 @@ class Collector():
             password=None
         )
         if collector_index == 1:
+            self.private_key = collector1_private_key
             self.pk = collector1_private_key.public_key()
             # self.pk_length = len(self.pk)
             # key_hash = hashlib.sha256(self.pk)
@@ -688,6 +691,7 @@ class Collector():
             client_thread.start()
             server_thread.start()
         else:
+            self.private_key = collector2_private_key
             self.pk = collector2_private_key.public_key()
             # self.pk_length = len(self.pk)
             # key_hash = hashlib.sha256(self.pk)
@@ -726,19 +730,104 @@ class Collector():
         print(f"COLLECTOR{collector_index} SERVER STARTED at PORT: {collector_port}")
         while True:    
             client, address = server.accept()
-            print(f"Connection Established with - PORT : {address[1]}")
+            t = threading.Thread(target=self.collector_controller, args=(self.collector_index, client, address))
+            t.start()
+
+    def collector_controller(self, collector_index, client, address):
+        print(f"Connection Established with - PORT : {address[1]}")
+        data = client.recv(2024)
+        data = pickle.loads(data)
+        if data[0] == (b'\x05'):
+            print("FROM ADMIN")
+            # for i in range(len(data)):
+            #     print(data[i])
+            if int(collector_index) == 2:
+                print("COLLECTOR 2 RECEIVED VOTER INFO")
+                client.close()
+            else:
+                print("COLLECTOR 1 RECEIVED VOTER INFO, PREPARING TO INITIALIZE PAILLIER CRYPTO")
+                # Define the number of voters and permutation values
+                N = 5
+                pi1 = [4, 1, 0, 2, 3]  # Example permutation values starting from 0
+                pub_key, priv_key = paillier.generate_paillier_keypair()
+                n = pub_key.n
+                bytes_needed = (n.bit_length() + 7) // 8 + 1 # calculate number of bytes needed
+                bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
+                n_bytes = n.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
+                len_n = int.to_bytes(len(n))
+                encrypted_perm = [pub_key.encrypt(pi1[i]) for i in range(N)]
+
+                col2_hash = self.other_C_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+                key_hash = hashlib.sha256(col2_hash).digest()
+                message = [b'\x06', key_hash, Collector.election_id, len_n, n]
+
+                # Convert the encrypted permutation values to bytes and calculate their length
+                
+                for v in encrypted_perm:
+                    enc_v = v.ciphertext()
+                    bytes_needed = (enc_v.bit_length() + 7) // 8  # calculate number of bytes needed
+                    bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
+                    enc_v_bytes = enc_v.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
+                    length_prefix = struct.pack('I', bytes_needed)
+                    message.append(length_prefix)
+                    message.append(enc_v_bytes)
+                print(len(message))
+
+                for i in message:
+                    print(type(i))
+
+
+                symmetric_key = os.urandom(32)
+
+                # Encrypt the payload using Salsa20
+                cipher = Salsa20.new(key=symmetric_key, nonce=b'\x00'*8)
+                payload = pickle.dumps(message)
+                payload_length = len(payload)
+                payload_encrypted = cipher.encrypt(payload)
+
+                # Encrypt the symmetric key using RSA
+                recipient_public_key = self.other_C_pk
+                key_encrypted = recipient_public_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
+
+                # Sign the message using RSA
+                sender_private_key = self.private_key
+                h = hashlib.blake2b.new(payload_length.to_bytes(4, byteorder='big') + payload_encrypted + key_encrypted)
+                signature = sender_private_key.sign(h)
+
+                # Generate the knowledge proof
+                knowledge_proof = sender_private_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
+                knowledge_proof_length = len(knowledge_proof).to_bytes(4, byteorder='big')
+
+                # Construct the message
+                payload_length = len(payload_encrypted).to_bytes(4, byteorder='big')
+                key_encrypted_length = len(key_encrypted[0]).to_bytes(4, byteorder='big')
+                signature_length = len(signature).to_bytes(4, byteorder='big')
+
+                message = [payload_length, payload_encrypted, key_encrypted_length, key_encrypted[0], signature_length, signature, knowledge_proof_length, knowledge_proof]
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+                # Connect to the server
+                client_socket.connect((self.other_C_host, self.other_C_port))
+
+                # Send the data
+                data = pickle.dumps(message)
+                client_socket.sendall(data)
+
+        else: 
+            print("FROM COLLECTOR 1")
+            for i in range(len(data)):
+                print(data[i])
+    def collector2_las_server(collector_port):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((HOST, collector_port))
+        server.listen(5)
+        while True:
+            client, address = server.accept()
             data = client.recv(2024)
             data = pickle.loads(data)
             for i in range(len(data)):
                 print(data[i])
-            if int(collector_index) == 2:
-                print("COLLECTOR 2 RECEIVED VOTER INFO")
-            else:
-                print("COLLECTOR 1 RECEIVED VOTER INFO, PREPARING TO INITIALIZE PAILLIER CRYPTO")
-                # INITIALIZE PAILLIER CRYPTO
-                import random
 
-                
     def collector_client(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.connect((HOST, 8000))
@@ -756,106 +845,7 @@ class Collector():
         # election ID
         # N
         ...
-    def paillier_init(self):
-        # Choose two large prime numbers p and q of equal length and 2048 bits
-        p = getPrime(2048)
-        q = getPrime(2048)
-
-        n = p * q
-        lamda = (p - 1) * (q - 1)
-        mu = inverse(lamda, n)
-
-        # Let g = n + 1, which will be used as the public key
-        public_key = n + 1
-        private_key = (lamda, mu)
-        public_key_bytes = public_key.to_bytes((public_key.bit_length() + 7) // 8, byteorder='big')
-        #send(public_key_bytes)
-
-# Function to generate large primes
-def generate_prime(bits):
-    p = random.getrandbits(bits)
-    while not is_prime(p):
-        p = random.getrandbits(bits)
-    return p
-
-# Function to check if a number is prime
-def is_prime(n):
-    if n <= 1:
-        return False
-    elif n <= 3:
-        return True
-    elif n % 2 == 0 or n % 3 == 0:
-        return False
-    i = 5
-    while i*i <= n:
-        print("O")
-        if n % i == 0 or n % (i + 2) == 0:
-            return False
-        i += 6
-    return True
-
-# Function to compute greatest common divisor
-def gcd(a, b):
-    while b:
-        a, b = b, a % b
-    return a
-
-# Function to generate a random coprime to n
-def random_coprime(n):
-    while True:
-        r = random.randrange(2, n)
-        if gcd(r, n) == 1:
-            return r
-
-# Function to compute the modular inverse
-def modinv(a, m):
-    g, x, _ = gcdextended(a, m)
-    if g != 1:
-        raise ValueError('Modular inverse does not exist')
-    return x % m
-
-# Function to compute the extended Euclidean algorithm
-def gcdextended(a, b):
-    if a == 0:
-        return (b, 0, 1)
-    else:
-        g, y, x = gcdextended(b % a, a)
-        return (g, x - (b // a) * y, y)
-
-# Function to generate public and private keys for the Paillier cryptosystem
-def generate_paillier_keys():
-    # Generate two large primes of equal length
-    p = generate_prime(2048)
-    q = generate_prime(2048)
-    # Compute n = pq and λ = lcm(p-1, q-1)
-    n = p * q
-    lambda_n = (p - 1) * (q - 1) // gcd(p - 1, q - 1)
-    # Compute µ = (L(g^λ mod n^2)^-1) mod n where g=n+1
-    g = n + 1
-    L = lambda x: (x - 1) // n
-    mu = modinv(L(pow(g, lambda_n, n*n)), n)
-    # Return public key (n, g) and private key (lambda_n, mu)
-    return (n, g), (lambda_n, mu)
-
-# Function to encrypt a message using the Paillier cryptosystem
-def paillier_encrypt(m, public_key):
-    n, g = public_key
-    r = random_coprime(n)
-    return (pow(g, m, n*n) * pow(r, n, n*n)) % (n*n)
-
-# Function to decrypt a ciphertext using the Paillier cryptosystem
-def paillier_decrypt(c, private_key):
-    lambda_n, mu = private_key
-    u = (pow(c, lambda_n, mu*mu) - 1) // mu
-    return L(u) * modinv(L(pow(n+1, lambda_n, n*n)), n) % n
-
-
-
-
-
-
-
-
+    
 
 class Communication():
     
@@ -925,22 +915,18 @@ class Communication():
 
 if __name__ == '__main__':
     # get the service name from the command line arguments
-    # service_name = sys.argv[1]
+    service_name = sys.argv[1]
 
-    # # start the service based on the service name
-    # if service_name == 'admin':
-    #     admin = Administrator()
-    # elif service_name == 'collector1':
-    #     collector1 = Collector(1)
-    # elif service_name == 'collector2':
-    #     collector2 = Collector(2)
-    # elif service_name.startswith('voter'):
-    #     print(sys.argv[1][-1])
-    #     vote = Voter(sys.argv[1][-1])
-    # else:
-    #     print('Invalid service name')
-    # Example usage
-    public_key, private_key = generate_paillier_keys()
-    m = 42
-    c = paillier_encrypt(m, public_key)
-    print(paillier_decrypt(c, private_key)) # Output: 42
+    # start the service based on the service name
+    if service_name == 'admin':
+        admin = Administrator()
+    elif service_name == 'collector1':
+        collector1 = Collector(1)
+    elif service_name == 'collector2':
+        collector2 = Collector(2)
+    elif service_name.startswith('voter'):
+        print(sys.argv[1][-1])
+        vote = Voter(sys.argv[1][-1])
+    else:
+        print('Invalid service name')
+    
