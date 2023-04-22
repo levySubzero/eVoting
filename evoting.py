@@ -1,11 +1,13 @@
 import hashlib
 import os
 import random
+import secrets
 import socket
 import pickle
 import struct
 import sys
 import threading
+import time
 import uuid
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
@@ -39,7 +41,7 @@ class Voter():
     name2_length = ''
     name2 = ''
 
-    def __init__(self, voter_id, admin_port):
+    def __init__(self, voter_id):
         self.voter_id = int(voter_id)
         voter_private_key = rsa.generate_private_key(
             public_exponent=65537,
@@ -51,6 +53,7 @@ class Voter():
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption()
             ))
+        
         message_type = b'\x03'
         serialized_key = voter_private_key.public_key().public_bytes(
             encoding=serialization.Encoding.DER,
@@ -76,10 +79,13 @@ class Voter():
         signature_length = struct.pack('>I', len(signature))
         message = payload_length + payload + random_bytes + signature_length + signature
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.connect((HOST, int(admin_port)))
+        try:
+            server.connect((HOST, 8000))
+        except OSError:
+            Administrator.admin_port = int(input("ENTER ADMIN PORT FROM ADMIN SERVER"))
+            server.connect((HOST, Administrator.admin_port))
         print("Connected to Admin Server")
         print("Registered Succefully")
-        print("Election Data Received")
         server.sendall(message)
         payload_length = None
         payload = None
@@ -90,48 +96,52 @@ class Voter():
         # Receive payload length
         payload_data = server.recv(2000)
         # print(payload_length_data)
+        payload_data = pickle.loads(payload_data)
+                
+        payload_len = payload_data[0]
+        message_type = payload_data[1]
+        Voter.election_id = payload_data[2]
+        print('Election ID_ADMIN: ',int.from_bytes(Voter.election_id, byteorder="big"))
+        Voter.collector1_host_length = payload_data[3]
+        print('C1_host_length', int.from_bytes(Voter.collector1_host_length, byteorder="big"))
+        Voter.collector1_host = payload_data[4]
+        print('C1_host', Voter.collector1_host.decode('utf-8'))
+        Voter.collector1_port = payload_data[5]
+        print('C1_port', int.from_bytes(Voter.collector1_port, byteorder="big"))
+        Voter.collector1_pk_length = payload_data[6]
+        print('C1_pk_length', int.from_bytes(Voter.collector1_pk_length, byteorder="big"))
+        Voter.collector1_pk = payload_data[7]
+        print('C1_pk')
+        Voter.collector2_host_length = payload_data[8]
+        print('C2_host_length', int.from_bytes(Voter.collector2_host_length, byteorder="big"))
+        Voter.collector2_host = payload_data[9]
+        print('C2_host', Voter.collector2_host.decode('utf-8'))
+        Voter.collector2_port = payload_data[10]
+        print('C2_port', int.from_bytes(Voter.collector2_port, byteorder="big"))
+        Voter.collector2_pk_length = payload_data[11]
+        print('C2_pk_length', int.from_bytes(Voter.collector2_pk_length, byteorder="big"))
+        Voter.collector1_pk = payload_data[12]
+        print('C2_pk')
+        Voter.M = payload_data[13]
+        print('M: ', int.from_bytes(Voter.M, byteorder="big"))
+        Voter.name1_length = payload_data[14]
+        print('name1_length: ', int.from_bytes(Voter.name1_length, byteorder="big"))
+        Voter.name1 = payload_data[15]
+        print('name1: ', Voter.name1.decode('utf-8'))
+        Voter.name2_length = payload_data[16]
+        print('name2_length: ', int.from_bytes(Voter.name2_length, byteorder="big"))
+        Voter.name2 = payload_data[17]
+        print('name2: ', Voter.name2.decode('utf-8'))
+        print("random 32bytes")
+        print("signature length")
+        print("signature")
 
-        payload_len = payload_data[:4]
-        message_type = payload_data[4:4+1]
-        election_ID = payload_data[4+1:4+1+16]
-        print('Election ID_ADMIN: ', election_ID, int.from_bytes(election_ID, byteorder="big"))
-        c1_host_length = payload_data[4+1+16:4+1+16+4]
-        print('C1_host_length', c1_host_length, int.from_bytes(c1_host_length, byteorder="big"))
-        c1_host = payload_data[4+1+16+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")]
-        print('C1_host', c1_host, c1_host.decode('utf-8'))
-        c1_port = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2]
-        print('C1_port', int.from_bytes(c1_port, byteorder="big"))
-        c1_pk_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4]
-        print('C1_pk_length', int.from_bytes(c1_pk_length, byteorder="big"))
-        c1_pk = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")]
-        print('C1_pk', c1_pk)
-        c2_host_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4]
-        print('C2_host_length', c2_host_length, int.from_bytes(c2_host_length, byteorder="big"))
-        c2_host = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")]
-        print('C2_host', c2_host, c2_host.decode('utf-8'))
-        c2_port = payload_data[24+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2]
-        print('C2_port', int.from_bytes(c2_port, byteorder="big"))
-        c2_pk_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4]
-        print('C2_pk_length', int.from_bytes(c2_pk_length, byteorder="big"))
-
-        c2_pk = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")]
-        print('C2_pk', c2_pk)
-        M = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1]
-        print('M: ', M, int.from_bytes(M, byteorder="big"))
-        name1_length = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4]
-        print('name1_length: ', name1_length, int.from_bytes(name1_length, byteorder="big"))
-        name1 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")]
-        print('name1: ', name1, name1.decode('utf-8'))
-        name2_length = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4]
-        print('name2_length: ', name2_length, int.from_bytes(name2_length, byteorder="big"))
-        name2 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4+int.from_bytes(name2_length, byteorder="big")]
-        print('name2: ', name2, name2.decode('utf-8'))
-        return
+        print("Election Data Received")
         # payload_length = struct.unpack('!I', payload_length_data)[0]
         # # print("size", int.from_bytes(payload_length, byteorder="big"))
         # print("size", payload_length)
         # # Receive payload
-        payload_data = server.recv(payload_length)
+        # payload_data = server.recv(payload_length)
 
         # # Receive random bits
         # random_bits_data = server.recv(32)
@@ -142,48 +152,7 @@ class Voter():
         # Receive signature
         # signature_data = server.recv(signature_length)
 
-        # Unpack payload
-        message_type = payload_data[:1]
-        election_ID = payload_data[1:17]
-        print('Election ID_ADMIN: ', election_ID, int.from_bytes(election_ID, byteorder="big"))
-        c1_host_length = payload_data[17:21]
-        print('C1_host_length', c1_host_length, int.from_bytes(c1_host_length, byteorder="big"))
-        c1_host = payload_data[21:21+int.from_bytes(c1_host_length, byteorder="big")]
-        print('C1_host', c1_host, c1_host.decode('utf-8'))
-        c1_port = payload_data[21+int.from_bytes(c1_host_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2]
-        print('C1_port', int.from_bytes(c1_port, byteorder="big"))
-        c1_pk_length = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2:21+int.from_bytes(c1_host_length, byteorder="big")+2+4]
-        print('C1_pk_length', int.from_bytes(c1_pk_length, byteorder="big"))
-        c1_pk = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")]
-        print('C1_pk', c1_pk)
-        c2_host_length = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4]
-        print('C2_host_length', c2_host_length, int.from_bytes(c2_host_length, byteorder="big"))
-        c2_host = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")]
-        print('C2_host', c2_host, c2_host.decode('utf-8'))
-        c2_port = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2]
-        print('C2_port', int.from_bytes(c2_port, byteorder="big"))
-        c2_pk_length = payload_data[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4]
-        print('C2_pk_length', int.from_bytes(c2_pk_length, byteorder="big"))
-
-        # c2_pk = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")]
-        # print('C2_pk', c2_pk)
-        # M = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length,send and receive  byte string in tcp python byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1]
-        # name1_length = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4]
-        # name1 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")]
-        # name2_length = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4]
-        # name2 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4++int.from_bytes(name2_length, byteorder="big")]
         
-
-        # print('host: ',c1_host)
-        # print('port: ', c1_port)
-        # print('host: ',c2_host)
-        # print('port: ', c2_port)
-        # print('name1: ', name1) 
-        # print('name2: ', name2)
-        
-
-
-
     def voter_info_req():
         # send signed to admin
         # message_type TYPE_REGISTER = 0x03
@@ -253,25 +222,6 @@ class Voter():
             print(f"Signature verification failed: {e}")
             return None
 
-        # Extract the data
-        metadata_bytes = message
-        metadata_type = int.from_bytes(metadata_bytes[0:1], byteorder='big')
-        election_id = metadata_bytes[1:17]
-        c1_host_length = int.from_bytes(metadata_bytes[17:21], byteorder='big')
-        c1_host = metadata_bytes[21:21+c1_host_length].decode('utf-8')
-        c1_port = int.from_bytes(metadata_bytes[21+c1_host_length:23+c1_host_length], byteorder='big')
-        c1_pk_length = int.from_bytes(metadata_bytes[23+c1_host_length:27+c1_host_length], byteorder='big')
-        c1_pk = metadata_bytes[27+c1_host_length:27+c1_host_length+c1_pk_length]
-        c2_host_length = int.from_bytes(metadata_bytes[27+c1_host_length:31+c1_host_length], byteorder='big')
-        c2_host = metadata_bytes[31+c1_host_length:31+c1_host_length+c2_host_length].decode('utf-8')
-        c2_port = int.from_bytes(metadata_bytes[31+c1_host_length+c2_host_length:33+c1_host_length+c2_host_length], byteorder='big')
-        c2_pk_length = int.from_bytes(metadata_bytes[33+c1_host_length+c2_host_length:37+c1_host_length+c2_host_length], byteorder='big')
-        c2_pk = metadata_bytes[37+c1_host_length+c2_host_length:37+c1_host_length+c2_host_length+c2_pk_length]
-        num_candidates = int.from_bytes(metadata_bytes[-15:-14], byteorder='big')
-        name1_length = int.from_bytes(metadata_bytes[-14:-10], byteorder='big')
-        name1 = metadata_bytes[-10-name1_length:-10].decode('utf-8')
-        name2_length = int.from_bytes(metadata_bytes[-10:-6], byteorder='big')
-        name2 = metadata_bytes[-6-name2_length:-6].decode('utf-8')
 
     def vote(admin_host,admin_port):
         # voter sends to collector 2
@@ -341,7 +291,6 @@ class Administrator():
     def __init__(self):
         # Generate a election
         election_id = os.urandom(16)
-
         Administrator.election_id = election_id
         print("***INITIALISING***")
 
@@ -412,162 +361,152 @@ class Administrator():
         Administrator.collector1_host_length = len(collector_host)
         Administrator.collector2_host_length = len(collector_host)
 
-        print("Now Enter the Ports for Admin and the collectors e.g 8000, 8001, 8002")
-        Administrator.admin_port = int(input("Enter port number for Admin: "))
-        Administrator.collector1_port = int(input("Enter port number for collector 1: "))
-        Administrator.collector2_port = int(input("Enter port number for collector 2: "))
-
-        voter_ids = [1, 2, 3, 4, 5]            
-
         server_thread = threading.Thread(target=self.admin_server)
         server_thread.start()
 
         
     def admin_server(self):
+        Administrator.admin_port = 8000
+        Administrator.collector1_port = 8001
+        Administrator.collector2_port = 8002
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind((HOST, int(Administrator.admin_port)))
-        server.listen(1)
+        try:
+            server.bind((HOST, int(Administrator.admin_port)))
+        except OSError:
+            Administrator.admin_port = int(input("ENTER ADMIN PORT"))
+            Administrator.collector1_port = int(input("ENTER CONTROLLER 1 PORT"))
+            Administrator.collector2_port = int(input("ENTER CONTROLLER 2 PORT"))
+            server.bind((HOST, int(Administrator.admin_port)))
+
+        print(f"Admin Server running at 127.0.0.1 : {Administrator.admin_port}")
+        print(f"Admin Server running at 127.0.0.1 : {Administrator.collector1_port}")
+        print(f"Admin Server running at 127.0.0.1 : {Administrator.collector2_port}")
+        server.listen(10)
         voters = []
         while True:    
             client, address = server.accept()
-            print(f"Connection Established with - PORT : {address[1]}")
-            data = client.recv(1024)
-            if data.find(b'\x03') != -1:
-                # extract the payload length
-                payload_length = int.from_bytes(data[:4], byteorder='big')
-
-                # extract the payload
-                payload = data[4:4+payload_length]
-
-                # extract the random bits
-                random_bits = data[4+payload_length:4+payload_length+32]
-
-                # extract the signature length
-                signature_length_start = 4+payload_length+32
-                signature_length_end = signature_length_start + 4
-                signature_length = int.from_bytes(data[signature_length_start:signature_length_end], byteorder='big')
-
-                # extract the signature
-                signature_start = signature_length_end
-                signature_end = signature_start + signature_length
-                signature = data[signature_start:signature_end]
-
-                # extract the payload contents
-                message_type = int.from_bytes(payload[:4], byteorder='big')
-                key_hash = payload[4:68]
-                voter_id = payload[33:38]
-                print(f'Election Data Sent to {voter_id}')
-                
-                message_type = b'\x04'
-                election_ID = Administrator.election_id
-                print('Election ID_ADMIN: ', election_ID, int.from_bytes(election_ID, byteorder="big"))
-                C1_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
-                print('C1_host_length', C1_host_length, int.from_bytes(election_ID, byteorder="big"))
-                C1_host = HOST.encode('utf-8')
-                print('C1_host', C1_host, HOST.encode('utf-8'))
-                C1_port = Administrator.collector1_port.to_bytes(2, byteorder='big')
-                print('C1_port', C1_port, Administrator.collector1_port)
-                C1_pk_length = len(Administrator.collector1_pk).to_bytes(4, byteorder='big')
-                print('C1_pk_length', C1_pk_length , len(Administrator.collector1_pk))
-                C1_pk = Administrator.collector1_pk
-                print('C1_pk ', C1_pk, )
-                C2_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
-                print('C2_host_length', C2_host_length, len(HOST.encode('utf-8')))
-                C2_host = HOST.encode('utf-8')
-                print('C2_host', C2_host, HOST)
-                C2_port = Administrator.collector2_port.to_bytes(2, byteorder='big')
-                print('C2_port', C2_port, Administrator.collector2_port)
-                C2_pk_length = len(Administrator.collector2_pk).to_bytes(4, byteorder='big')
-                print('C2_pk_length ', C2_pk_length, len(Administrator.collector2_pk))
-                C2_pk = Administrator.collector2_pk
-                print('C2_pk', C2_pk, )
-                M = (2).to_bytes(1, byteorder='big')
-                print('M', M, 2)
-                name1 = 'Competitor 1'.encode('utf-8')
-                print('name1 ', name1, 'Competitor 1')
-                name1_length = len(name1).to_bytes(4, byteorder='big')
-                print('name1_length ', name1_length, len(name1))
-                name2 = 'Competitor 2'.encode('utf-8')
-                print('name2', name2, 'Competitor 2')
-                name2_length = len(name2).to_bytes(4, byteorder='big')
-                print('name1_length ', name1_length, len(name1))
-                respond = [message_type , election_ID , C1_host_length , C1_host , C1_port , C1_pk_length , C1_pk , C2_host_length , C2_host , C2_port , C2_pk_length , C2_pk , M , name1_length , name1 , name2_length , name2]
-                response = b''
-                for i in respond:
-                    print(i)
-                    response += i
-                print(response)
-                # hash_value = hashes.Hash(hashes.BLAKE2b(64), backend=default_backend())
-                # hash_value.update(response + b'\x00' * 32)
-                # digest = hash_value.finalize()
-                # signature = Administrator.admin_private_key.sign(
-                #     digest,
-                #     padding.PKCS1v15(),
-                #     hashes.SHA256()
-                # )
-                
-                # send the signed response message
-                response_length = len(response).to_bytes(4, byteorder='big')
-                signature_length = len(signature).to_bytes(4, byteorder='big')
-                client.sendall(k := response_length + response + os.urandom(32) + signature_length + signature)
-                payload_data = response_length + response
-                payload_len = payload_data[:4]
-                message_type = payload_data[4:4+1]
-                election_ID = payload_data[4+1:4+1+16]
-                print('Election ID_ADMIN: ', election_ID, int.from_bytes(election_ID, byteorder="big"))
-                c1_host_length = payload_data[4+1+16:4+1+16+4]
-                print('C1_host_length', c1_host_length, int.from_bytes(c1_host_length, byteorder="big"))
-                c1_host = payload_data[4+1+16+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")]
-                print('C1_host', c1_host, c1_host.decode('utf-8'))
-                c1_port = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2]
-                print('C1_port', int.from_bytes(c1_port, byteorder="big"))
-                c1_pk_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4]
-                print('C1_pk_length', int.from_bytes(c1_pk_length, byteorder="big"))
-                c1_pk = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")]
-                print('C1_pk', c1_pk)
-                c2_host_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4]
-                print('C2_host_length', c2_host_length, int.from_bytes(c2_host_length, byteorder="big"))
-                c2_host = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")]
-                print('C2_host', c2_host, c2_host.decode('utf-8'))
-                c2_port = payload_data[24+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2]
-                print('C2_port', int.from_bytes(c2_port, byteorder="big"))
-                c2_pk_length = payload_data[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4]
-                print('C2_pk_length', int.from_bytes(c2_pk_length, byteorder="big"))
-
-                c2_pk = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")]
-                print('C2_pk', c2_pk)
-                M = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big"):4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1]
-                print('M: ', M, int.from_bytes(M, byteorder="big"))
-                name1_length = payload[4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1:4+1+16+4+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4]
-                print('name1_length: ', name1_length, int.from_bytes(name1_length, byteorder="big"))
-                name1 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")]
-                print('name1: ', name1, name1.decode('utf-8'))
-                name2_length = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big"):21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4]
-                print('name2_length: ', name2_length, int.from_bytes(name2_length, byteorder="big"))
-                name2 = payload[21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4:21+int.from_bytes(c1_host_length, byteorder="big")+2+4+int.from_bytes(c1_pk_length, byteorder="big")+4+int.from_bytes(c2_host_length, byteorder="big")+2+4+int.from_bytes(c2_pk_length, byteorder="big")+1+4+int.from_bytes(name1_length, byteorder="big")+4+int.from_bytes(name2_length, byteorder="big")]
-                print('name2: ', name2, name2.decode('utf-8'))
-                if len(voters) == 5:
-                    print('**REGISTRATION PERIOD ENDED**')
-                    print('**SENDING LIST OF VOTERS TO COLLECTORS**')
-                    print('**COLLECTOR 1 TO INITIALISE PAILIER**')
-                    ...
-                    break
-
-            else:
-                print('election', int.from_bytes(Administrator.election_id, byteorder='big'))
-                client.send(Administrator.election_id)
-
-            
+            t = threading.Thread(target=self.print_numbers, args=(client, address, voters))
+            t.start()
+     
     def admin_client(self, port, message):
+        print(type(message))
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.connect((HOST, port))
-        print("sending voters list to collector")
+        print("SENDING VOTER LIST TO COLLECTOR")
         server.send(message)
+        # pickle.dumps
 
-        # Define the collector and administrator data structures
-        # collector1 = {'host': 'localhost', 'port': 8000, 'public_key': collector1_public_key}
-        # collector2 = {'host': 'localhost', 'port': 8001, 'public_key': collector2_public_key}
-        # administrator = {'host': 'localhost', 'port': 8002, 'public_key': admin_public_key}
+    def print_numbers(self, client, x, voters):
+        print(f"Connection Established with - PORT : {x[1]}")
+        data = client.recv(1024)
+
+        if data.find(b'\x03') != -1:
+            # extract the payload length & payload
+            payload_length = int.from_bytes(data[:4], byteorder='big')
+            payload = data[4:4+payload_length]
+
+            # extract the random bits
+            random_bits = data[4+payload_length:4+payload_length+32]
+
+            # extract the signature length
+            signature_length_start = 4+payload_length+32
+            signature_length_end = signature_length_start + 4
+            signature_length = int.from_bytes(data[signature_length_start:signature_length_end], byteorder='big')
+
+            # extract the signature
+            signature_start = signature_length_end
+            signature_end = signature_start + signature_length
+            signature = data[signature_start:signature_end]
+
+            # extract the payload contents
+            message_type = int.from_bytes(payload[:4], byteorder='big')
+            key_hash = payload[4:68]
+            voter_id = payload[33:38]
+            print(f'Sending Election Data {int.from_bytes(voter_id, byteorder="big")}')
+
+            #Generate message to send to voter
+            message_type = b'\x04'
+            election_ID = Administrator.election_id
+            C1_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
+            C1_host = HOST.encode('utf-8')
+            C1_port = Administrator.collector1_port.to_bytes(2, byteorder='big')
+            C1_pk_length = len(Administrator.collector1_pk).to_bytes(4, byteorder='big')
+            C1_pk = Administrator.collector1_pk
+            C2_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
+            C2_host = HOST.encode('utf-8')
+            C2_port = Administrator.collector2_port.to_bytes(2, byteorder='big')
+            C2_pk_length = len(Administrator.collector2_pk).to_bytes(4, byteorder='big')
+            C2_pk = Administrator.collector2_pk
+            M = (2).to_bytes(1, byteorder='big')
+            name1 = 'Competitor 1'.encode('utf-8')
+            name1_length = len(name1).to_bytes(4, byteorder='big')
+            name2 = 'Competitor 2'.encode('utf-8')
+            name2_length = len(name2).to_bytes(4, byteorder='big')
+            response = b''
+            random_bits = secrets.token_bytes(32)
+            hash_value = hashes.Hash(hashes.BLAKE2b(64), backend=default_backend())
+            hash_value.update(response + random_bits)
+            digest = hash_value.finalize()
+            signature = Administrator.admin_private_key.sign(
+                digest,
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+            # send the signed response message
+            response_length = len(response).to_bytes(4, byteorder='big')
+            signature_length = len(signature).to_bytes(4, byteorder='big')
+            
+            client.sendall(pickle.dumps([response_length, message_type , election_ID , 
+                                            C1_host_length , C1_host , C1_port , C1_pk_length , C1_pk,
+                                            C2_host_length , C2_host , C2_port , C2_pk_length , C2_pk,
+                                            M , name1_length , name1 , name2_length, name2, random_bits,
+                                            signature_length, signature]))
+            with open(f'data/voter{int.from_bytes(voter_id, byteorder="big")}_private_key.pem', "rb") as f:
+                pem_data = f.read()
+                voter_private_key = serialization.load_pem_private_key(
+                pem_data,
+                password=None
+            )
+            public_key = voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+            public_key_len = len(voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)).to_bytes(4, byteorder="big")
+            voters.extend([voter_id, public_key_len, public_key])
+            # voter_pk = voter_private_key.public_key()
+            if len(voters) == 15:
+                print('**REGISTRATION PERIOD ENDED**')
+                print('**GENERATING LIST OF VOTERS FOR COLLECTORS**')
+                #Generate message for collectors
+                message = [b'\x05', Administrator.election_id]
+                for i in range(len(voters)):
+                    message.append(voters[i])
+                
+                signature = Administrator.admin_private_key.sign(
+                    pickle.dumps(message),
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH
+                    ),
+                    hashes.SHA256()
+                )
+                
+                signature_len = len(bytes.fromhex(signature.hex())).to_bytes(4, byteorder="big")
+                x = [secrets.token_bytes(32), signature_len, bytes.fromhex(signature.hex())]
+                # message = message.extend()
+                print('**SENDING LIST OF VOTERS FOR COLLECTOR1**')
+                for i in x:
+                    message.append(i)
+                for i in message:
+                    print(type(i))
+                self.admin_client(Administrator.collector1_port, pickle.dumps(message))
+                time.sleep(1)
+                print('**SENDING LIST OF VOTERS FOR COLLECTOR2**')
+                self.admin_client(Administrator.collector2_port, pickle.dumps(message))
+                time.sleep(1)
+                print('**COLLECTOR 1 TO INITIALISE PAILIER ONCE ALL COLLECTORS RECEIVE DATA**')
+            client.close()
+
+        else:
+            client.send(Administrator.election_id)
+            client.close()
 
     def receive_voter_register():
         admin_private_key, message = ''
@@ -718,22 +657,10 @@ class Collector():
     voters_info = []
     paillier_public_key = ''
 
-    def __init__(self, admin_port, collector_index):
+    def __init__(self, collector_index):
         self.collector_index = collector_index
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.connect((HOST, admin_port))
-        print("Connected to Admin")
-        election_id = server.recv(1024)
-        try:
-            election_id = election_id.decode('utf-8')
-            print(f"utf: {election_id}")
-        except UnicodeDecodeError:
-            print('id_int',int.from_bytes(election_id, byteorder='big'))
-            election_id = election_id.hex()
-            print(f"hex: {election_id}")
-        Collector.election_id = election_id
-
-        with open("data/collector1_private_key.pem", "rb") as f:
+       
+        with open(f"data/collector{collector_index}_private_key.pem", "rb") as f:
             pem_data = f.read()
             collector1_private_key = serialization.load_pem_private_key(
             pem_data,
@@ -753,9 +680,13 @@ class Collector():
             # self.key_hash = key_hash
             self.other_C_host_length = len(HOST)
             self.other_C_host = HOST
-            self.other_C_port = input("Enter Port that you Entered for Collector2 in Admin server")
+            self.other_C_port = Administrator.collector2_port
             self.other_C_pk = collector2_private_key.public_key()
             # self.other_C_pk_length = len(self.other_C_pk)
+            client_thread = threading.Thread(target=self.collector_client)
+            server_thread = threading.Thread(target=self.collector_server, args=(self.collector_index, ))
+            client_thread.start()
+            server_thread.start()
         else:
             self.pk = collector2_private_key.public_key()
             # self.pk_length = len(self.pk)
@@ -764,10 +695,59 @@ class Collector():
             # self.key_hash = key_hash
             self.other_C_host_length = len(HOST)
             self.other_C_host = HOST
-            self.other_C_port = input("Enter Port that you Entered for Collector1 in Admin server")
+            self.other_C_port = Administrator.collector1_port
             self.other_C_pk = collector1_private_key.public_key()
             # self.other_C_pk_length = len(self.other_C_pk)
+            client_thread = threading.Thread(target=self.collector_client)
+            server_thread = threading.Thread(target=self.collector_server, args=(self.collector_index, ))
+            client_thread.start()
+            server_thread.start()
+        
 
+    def collector_server(self, collector_index):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        collector_port = 0000
+        if int(collector_index) == 1:
+            collector_port = 8001
+        else:
+            collector_port = 8002
+        try:
+            server.bind((HOST, collector_port))
+        except OSError:
+            if int(collector_index) == 1:
+                Administrator.collector1_port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
+                collector_port = Administrator.collector1_port
+            else:
+                Administrator.collector2_port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
+                collector_port = Administrator.collector2_port
+            
+            server.bind((HOST, collector_port))
+        server.listen(5)
+        print(f"COLLECTOR{collector_index} SERVER STARTED at PORT: {collector_port}")
+        while True:    
+            client, address = server.accept()
+            print(f"Connection Established with - PORT : {address[1]}")
+            data = client.recv(2024)
+            data = pickle.loads(data)
+            for i in range(len(data)):
+                print(data[i])
+            if int(collector_index) == 2:
+                print("COLLECTOR 2 RECEIVED VOTER INFO")
+            else:
+                print("COLLECTOR 1 RECEIVED VOTER INFO, PREPARING TO INITIALIZE PAILLIER CRYPTO")
+                # INITIALIZE PAILLIER CRYPTO
+                import random
+
+                
+    def collector_client(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.connect((HOST, 8000))
+        server.sendall(b'R')
+        election_id = server.recv(1024)
+        Collector.election_id = election_id
+        print("Connected to Admin")
+        print(f'Election ID: {int.from_bytes(election_id, byteorder="big")}')
+        server.close()
 
     def send_shares():
         # send signed to both collectors
@@ -776,52 +756,6 @@ class Collector():
         # election ID
         # N
         ...
-
-    def receive_type_voters(self):
-        encrypted_message, collector_private_key, admin_public_key = '', '' 
-        # Decrypt the message using the collector's private key
-        decrypted_message = collector_private_key.decrypt(
-            encrypted_message,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-
-        # Unparse the message
-        message_type = decrypted_message[0:1]
-        election_id = decrypted_message[1:17]
-        num_voters = int.from_bytes(decrypted_message[17:21], byteorder='big')
-        serialized_voters = decrypted_message[21:-256]
-        signature = decrypted_message[-256:]
-        self.N = num_voters
-
-        # Verify the signature using the admin's public key
-        admin_public_key.verify(
-            signature,
-            b'\x02' + election_id + num_voters.to_bytes(4, byteorder='big') + serialized_voters,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
-
-        # Parse the serialized voters
-        voters = []
-        i = 0
-        while i < len(serialized_voters):
-            voter_id = int.from_bytes(serialized_voters[i:i+4], byteorder='big')
-            voter_pk_length = int.from_bytes(serialized_voters[i+4:i+8], byteorder='big')
-            voter_pk = serialized_voters[i+8:i+8+voter_pk_length]
-            voters.append({'id': voter_id, 'pk': voter_pk})
-            i += 8 + voter_pk_length
-
-        # # Close the socket
-        # conn.close()
-        # s.close()
-
     def paillier_init(self):
         # Choose two large prime numbers p and q of equal length and 2048 bits
         p = getPrime(2048)
@@ -837,158 +771,90 @@ class Collector():
         public_key_bytes = public_key.to_bytes((public_key.bit_length() + 7) // 8, byteorder='big')
         #send(public_key_bytes)
 
-    def las_c1_initiate(self):
-        message_type = b'0x06'
-        election_id = Collector.election_id.encode()
-        N = len(Collector.voters_info) # num_of_voters
+# Function to generate large primes
+def generate_prime(bits):
+    p = random.getrandbits(bits)
+    while not is_prime(p):
+        p = random.getrandbits(bits)
+    return p
 
-        # Generate random permutation of {0, 1, ..., N-1}
-        pi = random.sample(range(N), N)
+# Function to check if a number is prime
+def is_prime(n):
+    if n <= 1:
+        return False
+    elif n <= 3:
+        return True
+    elif n % 2 == 0 or n % 3 == 0:
+        return False
+    i = 5
+    while i*i <= n:
+        print("O")
+        if n % i == 0 or n % (i + 2) == 0:
+            return False
+        i += 6
+    return True
 
-        # Encrypt each permuted value using Paillier cryptosystem
-        encrypted_values = []
-        # for i in range(N):
-            # encrypted_value = paillier_encrypt(pi[i], self.paillier_key.public_key)
-            # encrypted_values.append(encrypted_value)
+# Function to compute greatest common divisor
+def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return a
 
-        # Serialize and pack message fields
-        # key_hash = hashlib.sha256(rsa_key.publickey().export_key()).digest()
-        # n_bytes = long_to_bytes(N)
-        # value1_bytes = b"".join([long_to_bytes(value) for value in encrypted_values])
+# Function to generate a random coprime to n
+def random_coprime(n):
+    while True:
+        r = random.randrange(2, n)
+        if gcd(r, n) == 1:
+            return r
 
-        # packed_message = message_type + self.key_hash + election_id + n_bytes + value1_bytes
-        # Sign the message with RSA digital signature
-        # signature = rsa_key.sign(packed_message, "")
-        # signed_message = packed_message + signature
+# Function to compute the modular inverse
+def modinv(a, m):
+    g, x, _ = gcdextended(a, m)
+    if g != 1:
+        raise ValueError('Modular inverse does not exist')
+    return x % m
 
-        # Encrypt the signed message with AES
-        iv = b"1234567890123456"
-        cipher = AES.new(self.key_hash[:16], AES.MODE_CBC, iv)
-        # encrypted_message = cipher.encrypt(pad(signed_message, 16))
+# Function to compute the extended Euclidean algorithm
+def gcdextended(a, b):
+    if a == 0:
+        return (b, 0, 1)
+    else:
+        g, y, x = gcdextended(b % a, a)
+        return (g, x - (b // a) * y, y)
 
-        # Connect to c2 over TCP and send the encrypted message
-        TCP_IP = 'c2_ip_address'
-        TCP_PORT = 1234
-        BUFFER_SIZE = 1024
+# Function to generate public and private keys for the Paillier cryptosystem
+def generate_paillier_keys():
+    # Generate two large primes of equal length
+    p = generate_prime(2048)
+    q = generate_prime(2048)
+    # Compute n = pq and λ = lcm(p-1, q-1)
+    n = p * q
+    lambda_n = (p - 1) * (q - 1) // gcd(p - 1, q - 1)
+    # Compute µ = (L(g^λ mod n^2)^-1) mod n where g=n+1
+    g = n + 1
+    L = lambda x: (x - 1) // n
+    mu = modinv(L(pow(g, lambda_n, n*n)), n)
+    # Return public key (n, g) and private key (lambda_n, mu)
+    return (n, g), (lambda_n, mu)
 
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((TCP_IP, TCP_PORT))
+# Function to encrypt a message using the Paillier cryptosystem
+def paillier_encrypt(m, public_key):
+    n, g = public_key
+    r = random_coprime(n)
+    return (pow(g, m, n*n) * pow(r, n, n*n)) % (n*n)
 
-        # s.send(encrypted_message)
-        data = s.recv(BUFFER_SIZE)
+# Function to decrypt a ciphertext using the Paillier cryptosystem
+def paillier_decrypt(c, private_key):
+    lambda_n, mu = private_key
+    u = (pow(c, lambda_n, mu*mu) - 1) // mu
+    return L(u) * modinv(L(pow(n+1, lambda_n, n*n)), n) % n
 
-        s.close()
 
-    def las_c2_response(self):
-        # TYPE_LAS2 0x07
-        ...
 
-    # -- Sub-protocal 1----
-    def initiate_verification(admin_host, admin_port, election_id):
-        # send signed to the other collector
-        # message_type TYPE_VERIFY1
-        # key hash
-        # election ID
-        # voter ID
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((admin_host, admin_port))
 
-        message_type = b'TYPE_VERIFY1'
-        key_hash = b'64_byte_key_hash'
-        voter_id = b'4_byte_voter_id'
-        message = (message_type, key_hash, election_id, voter_id)
 
-        with open("collector1_private_key.pem", "rb") as f:
-            pem_data = f.read()
-            collector1_private_key = serialization.load_pem_private_key(
-            pem_data,
-            password=None
-        )
 
-        signature = collector1_private_key.sign(pickle.dumps(message), padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH
-        ), hashes.SHA256())
 
-        ...
-
-    def init_response1(i):
-        # send signed and Encrypted to initiating collector
-        # message_type TYPE_VERIFY2
-        # election ID
-        # STPM_index
-        # value_length
-        # value
-
-        # message_type = b'TYPE_VERIFY2'
-        # key_hash = b'64_byte_key_hash'
-        # election_id = b'4_byte_voter_id'
-        # STPM_index = i
-        # value_length
-        # value
-        # message = (message_type, key_hash, election_id, STPM_index, value_length, value)
-
-        # with open("collector1_private_key.pem", "rb") as f:
-        #     pem_data = f.read()
-        #     collector1_private_key = serialization.load_pem_private_key(
-        #     pem_data,
-        #     password=None
-        # )
-
-        # signature = collector1_private_key.sign(pickle.dumps(message), padding.PSS(
-        #     mgf=padding.MGF1(hashes.SHA256()),
-        #     salt_length=padding.PSS.MAX_LENGTH
-        # ), hashes.SHA256())
-
-        ...
-
-    def init_response2(i):
-        # send signed and Encrypted to initres1 initiating collector
-        # message_type TYPE_VERIFY3
-        # election ID
-        # STPM_index
-        # value_length
-        # value
-        # message_type = b'TYPE_VERIFY3'
-        # key_hash = b'64_byte_key_hash'
-        # election_id = b'4_byte_voter_id'
-        # STPM_index = i
-        # value_length
-        # value
-        # message = (message_type, key_hash, election_id, STPM_index, value_length, value)
-
-        # with open("collector1_private_key.pem", "rb") as f:
-        #     pem_data = f.read()
-        #     collector1_private_key = serialization.load_pem_private_key(
-        #     pem_data,
-        #     password=None
-        # )
-
-        # signature = collector1_private_key.sign(pickle.dumps(message), padding.PSS(
-        #     mgf=padding.MGF1(hashes.SHA256()),
-        #     salt_length=padding.PSS.MAX_LENGTH
-        # ), hashes.SHA256())
-        ...
-
-    # collectors exchange product
-    def product_send():
-        # send signed and Encrypted to other collector
-        # message_type TYPE_VERIFY4
-        # election ID
-        # product_length
-        # product
-        ...
-
-# ------- Sub Protocal 2 --------
-    def send_gsi():   
-        # each collector send signed and Encrypted to other collector
-        # message_type TYPE_VERIFY5
-        # key_hash 64 bytes
-        # election ID
-        ...
-
-    def send_to_admin():
-        ...
 
 
 class Communication():
@@ -1056,35 +922,25 @@ class Communication():
             # Receive responses from admin here
             ...
 
-    # Define the admin client thread
-    def admin_client():
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as admin_sock:
-            # admin_sock.connect((COLLECTOR1_IP, COLLECTOR1_PORT))
-            # print(f"Admin connected to collector1 server at {COLLECTOR1_IP}:{COLLECTOR1_PORT}")
-            # Send requests to collector1 here
-            # Receive responses from collector1 here
-            # Send responses to voters through admin server here
-
-            # admin_sock.connect((COLLECTOR2_IP, COLLECTOR2_PORT))
-            # print(f"Admin connected to collector2 server at {COLLECTOR2_IP}:{COLLECTOR2_PORT}")
-            # Send requests to collector2 here
-            # Receive responses from collector2 here
-            # Send responses to voters through admin server here
-            ...
-
 
 if __name__ == '__main__':
     # get the service name from the command line arguments
-    service_name = sys.argv[1]
+    # service_name = sys.argv[1]
 
-    # start the service based on the service name
-    if service_name == 'admin':
-        admin = Administrator()
-    elif service_name == 'collector1':
-        collector1 = Collector(int(sys.argv[2]), 1)
-    elif service_name == 'collector2':
-        collector2 = Collector(int(sys.argv[2]), 2)
-    elif service_name == 'voter':
-        vote = Voter(sys.argv[2], sys.argv[3])
-    else:
-        print('Invalid service name')
+    # # start the service based on the service name
+    # if service_name == 'admin':
+    #     admin = Administrator()
+    # elif service_name == 'collector1':
+    #     collector1 = Collector(1)
+    # elif service_name == 'collector2':
+    #     collector2 = Collector(2)
+    # elif service_name.startswith('voter'):
+    #     print(sys.argv[1][-1])
+    #     vote = Voter(sys.argv[1][-1])
+    # else:
+    #     print('Invalid service name')
+    # Example usage
+    public_key, private_key = generate_paillier_keys()
+    m = 42
+    c = paillier_encrypt(m, public_key)
+    print(paillier_decrypt(c, private_key)) # Output: 42
