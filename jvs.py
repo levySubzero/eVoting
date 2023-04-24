@@ -98,6 +98,7 @@ class Voter():
         # Receive payload length
         payload_data = server.recv(2000)
         # print(payload_length_data)
+        server.close()
         payload_data = pickle.loads(payload_data)
                 
         payload_len = payload_data[0]
@@ -139,6 +140,23 @@ class Voter():
         print("signature")
 
         print("ELECTION DATA RECEIVED")
+        print("VOTE")
+        print("Wait until all the voters get election information to cast vote")
+        print('COMPETITOR 1: A')
+        print('COMPETITOR 2: B')
+        my_vote = input("ENTER YOUR VOTE A OR B: ")
+        if my_vote == 'A' or my_vote == 'a':
+            my_vote = (1).to_bytes(4, byteorder="big")
+        else:
+            my_vote = (2).to_bytes(4, byteorder="big")
+        message = pickle.dumps([b'vo', my_vote])
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            server.connect((HOST, 8000))
+        except OSError:
+            Administrator.admin_port = int(input("ENTER ADMIN PORT FROM ADMIN SERVER"))
+            server.connect((HOST, Administrator.admin_port))
+        server.sendall(message)
         # payload_length = struct.unpack('!I', payload_length_data)[0]
         # # print("size", int.from_bytes(payload_length, byteorder="big"))
         # print("size", payload_length)
@@ -153,38 +171,90 @@ class Voter():
 
         # Receive signature
         # signature_data = server.recv(signature_length)
-        
-    def request_shares(self, collector_index):
-        request_shares = input("Press 1 only when collectors are ready")
-        if collector_index == 1:
-            port = int(Voter.collector1_port)
-            key = Voter.collector1_pk
-        else:
-            port = int(Voter.collector2_port)
-            key = Voter.collector2_pk
+
+        return
+        time.sleep(3)
         print("Connecting to collector 2")
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.connect((HOST, port))
-        col_hash = key.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-        key_hash = hashlib.sha256(col_hash).digest()
-        message = [b'\x08', key_hash, Voter.election_id, self.votr_id]
-        # Sign the message
-        # signature = voter_private_key.sign(
-        #     message,
-        #     padding.PSS(
-        #         mgf=padding.MGF1(hashes.SHA256()),
-        #         salt_length=padding.PSS.MAX_LENGTH
-        #     ),
-        #     hashes.SHA256()
-        # )
+        server.connect((HOST, int.from_bytes(Voter.collector2_port, byteorder="big")))
+        col2_hash = Voter.collector2_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        key_hash2 = hashlib.sha256(col2_hash).digest()
+        message = [b'\x08', key_hash2, Voter.election_id, self.votr_id]
         print("Requesting shares")
         message = pickle.loads(message)
         server.sendall(message)
         shares = server.recv(1024)
         #decrypt
-        # return N, R, Si, S2i, _Si, _S2i
-        
-        
+        self.N = ''
+        self.R = ''
+        self.Si = ''
+        self.S2i = ''
+        self._Si = ''
+        self._S2i = ''
+        #waits & get from collector 1
+        print("Connecting to collector 2")
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.connect((HOST, int.from_bytes(Voter.collector1_port, byteorder="big")))
+        col1_hash = Voter.collector1_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        key_hash1 = hashlib.sha256(col1_hash).digest()
+        message = [b'\x08', key_hash1, Voter.election_id, self.votr_id]
+        print("Requesting shares")
+        message = pickle.loads(message)
+        server.sendall(message)
+        shares = server.recv(1024)
+        #decrypt
+        self.N = ''
+        self.R = ''
+        self.Si = ''
+        self.S2i = ''
+        self._Si = ''
+        self._S2i = ''
+
+ 
+    def vote(admin_host,admin_port):
+        # voter sends to collector 2
+        # message_type TYPE_SHARES_REQUEST=0x08
+        # voter ID
+        # election ID
+
+        voter_private_key, collector_public_key, collector_address, election_id, voter_id, collector_port = ''
+        voter_public_key = voter_private_key.public_key()
+        serialized_key = voter_public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        key_hash = hashlib.sha256(serialized_key).digest()
+        # Create the message to sign
+        message = b'\x03' + key_hash + election_id + voter_id.to_bytes(4, byteorder='big')
+
+        # Sign the message
+        signature = voter_private_key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+
+         # Create the final message to send
+        final_message = b'\x08' + key_hash + election_id + voter_id.to_bytes(4, byteorder='big') + signature
+
+        # Encrypt the message for the collector
+        encrypted_message = collector_public_key.encrypt(
+            final_message,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+
+        # Send the message to the collector
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((collector_address, collector_port))
+            s.sendall(encrypted_message)
+
 
 class Administrator():
     election_id = ''
@@ -281,7 +351,7 @@ class Administrator():
 
         server_thread = threading.Thread(target=self.admin_server)
         server_thread.start()
-        
+
     def admin_server(self):
         Administrator.admin_port = 8000
         Administrator.collector1_port = 8001
@@ -300,9 +370,10 @@ class Administrator():
         print(f"Admin Server running at 127.0.0.1 : {Administrator.collector2_port}")
         server.listen(10)
         voters = []
+        votes = []
         while True:    
             client, address = server.accept()
-            t = threading.Thread(target=self.print_numbers, args=(client, address, voters))
+            t = threading.Thread(target=self.print_numbers, args=(client, address, voters, votes))
             t.start()
      
     def admin_client(self, port, message):
@@ -313,115 +384,141 @@ class Administrator():
         server.send(message)
         # pickle.dumps
 
-    def print_numbers(self, client, x, voters):
+    def print_numbers(self, client, x, voters, votes):
         print(f"Connection Established with - PORT : {x[1]}")
         data = client.recv(1024)
 
-        if data.find(b'\x03') != -1:
-            # extract the payload length & payload
-            payload_length = int.from_bytes(data[:4], byteorder='big')
-            payload = data[4:4+payload_length]
+        try:
+            data = pickle.loads(data)
+            if data[0] == b'vo':
+                vote = int.from_bytes(data[1], byteorder="big")
+                votes.append(vote)
+                if len(votes) == 5:
+                    comp1_votes = 0
+                    comp2_votes = 0
+                    for i in votes:
+                        if i == 1:
+                            comp1_votes += 1
+                        else:
+                            comp2_votes += 1
+                    print('**RESULTS**')
+                    print('Competitor 1: ', comp1_votes)
+                    print('Competitor 2: ', comp2_votes)
+                    winner = max([comp1_votes, comp2_votes])
+                    if winner == comp1_votes:
+                        print('Winner : Competitor 1')
+                    else:
+                        print('Winner : Competitor 2')
 
-            # extract the random bits
-            random_bits = data[4+payload_length:4+payload_length+32]
+                client.close()
+            else:
+                client.send(Administrator.election_id)
+                client.close()
+        except:
+            if not isinstance(data, list) and data.find(b'\x03') != -1:
+                 # extract the payload length & payload
+                 payload_length = int.from_bytes(data[:4], byteorder='big')
+                 payload = data[4:4+payload_length]
 
-            # extract the signature length
-            signature_length_start = 4+payload_length+32
-            signature_length_end = signature_length_start + 4
-            signature_length = int.from_bytes(data[signature_length_start:signature_length_end], byteorder='big')
+                 # extract the random bits
+                 random_bits = data[4+payload_length:4+payload_length+32]
 
-            # extract the signature
-            signature_start = signature_length_end
-            signature_end = signature_start + signature_length
-            signature = data[signature_start:signature_end]
+                 # extract the signature length
+                 signature_length_start = 4+payload_length+32
+                 signature_length_end = signature_length_start + 4
+                 signature_length = int.from_bytes(data[signature_length_start:signature_length_end], byteorder='big')
 
-            # extract the payload contents
-            message_type = int.from_bytes(payload[:4], byteorder='big')
-            key_hash = payload[4:68]
-            voter_id = payload[33:38]
-            print(f'Sending Election Data {int.from_bytes(voter_id, byteorder="big")}')
+                 # extract the signature
+                 signature_start = signature_length_end
+                 signature_end = signature_start + signature_length
+                 signature = data[signature_start:signature_end]
 
-            #Generate message to send to voter
-            message_type = b'\x04'
-            election_ID = Administrator.election_id
-            C1_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
-            C1_host = HOST.encode('utf-8')
-            C1_port = Administrator.collector1_port.to_bytes(2, byteorder='big')
-            C1_pk_length = len(Administrator.collector1_pk).to_bytes(4, byteorder='big')
-            C1_pk = Administrator.collector1_pk
-            C2_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
-            C2_host = HOST.encode('utf-8')
-            C2_port = Administrator.collector2_port.to_bytes(2, byteorder='big')
-            C2_pk_length = len(Administrator.collector2_pk).to_bytes(4, byteorder='big')
-            C2_pk = Administrator.collector2_pk
-            M = (2).to_bytes(1, byteorder='big')
-            name1 = 'Competitor 1'.encode('utf-8')
-            name1_length = len(name1).to_bytes(4, byteorder='big')
-            name2 = 'Competitor 2'.encode('utf-8')
-            name2_length = len(name2).to_bytes(4, byteorder='big')
-            response = b''
-            random_bits = secrets.token_bytes(32)
-            hash_value = hashes.Hash(hashes.BLAKE2b(64), backend=default_backend())
-            hash_value.update(response + random_bits)
-            digest = hash_value.finalize()
-            signature = Administrator.admin_private_key.sign(
-                digest,
-                padding.PKCS1v15(),
-                hashes.SHA256()
-            )
-            # send the signed response message
-            response_length = len(response).to_bytes(4, byteorder='big')
-            signature_length = len(signature).to_bytes(4, byteorder='big')
-            
-            client.sendall(pickle.dumps([response_length, message_type , election_ID , 
-                                            C1_host_length , C1_host , C1_port , C1_pk_length , C1_pk,
-                                            C2_host_length , C2_host , C2_port , C2_pk_length , C2_pk,
-                                            M , name1_length , name1 , name2_length, name2, random_bits,
-                                            signature_length, signature]))
-            with open(f'data/voter{int.from_bytes(voter_id, byteorder="big")}_private_key.pem', "rb") as f:
-                pem_data = f.read()
-                voter_private_key = serialization.load_pem_private_key(
-                pem_data,
-                password=None
-            )
-            public_key = voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-            public_key_len = len(voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)).to_bytes(4, byteorder="big")
-            voters.extend([voter_id, public_key_len, public_key])
-            # voter_pk = voter_private_key.public_key()
-            if len(voters) == 15:
-                print('**REGISTRATION PERIOD ENDED**')
-                print('**GENERATING LIST OF VOTERS FOR COLLECTORS**')
-                #Generate message for collectors
-                message = [b'\x05', Administrator.election_id]
-                for i in range(len(voters)):
-                    message.append(voters[i])
+                 # extract the payload contents
+                 message_type = int.from_bytes(payload[:4], byteorder='big')
+                 key_hash = payload[4:68]
+                 voter_id = payload[33:38]
+                 print(f'Sending Election Data {int.from_bytes(voter_id, byteorder="big")}')
+
+                 #Generate message to send to voter
+                 message_type = b'\x04'
+                 election_ID = Administrator.election_id
+                 C1_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
+                 C1_host = HOST.encode('utf-8')
+                 C1_port = Administrator.collector1_port.to_bytes(2, byteorder='big')
+                 C1_pk_length = len(Administrator.collector1_pk).to_bytes(4, byteorder='big')
+                 C1_pk = Administrator.collector1_pk
+                 C2_host_length = len(HOST.encode('utf-8')).to_bytes(4, byteorder='big')
+                 C2_host = HOST.encode('utf-8')
+                 C2_port = Administrator.collector2_port.to_bytes(2, byteorder='big')
+                 C2_pk_length = len(Administrator.collector2_pk).to_bytes(4, byteorder='big')
+                 C2_pk = Administrator.collector2_pk
+                 M = (2).to_bytes(1, byteorder='big')
+                 name1 = 'Competitor 1'.encode('utf-8')
+                 name1_length = len(name1).to_bytes(4, byteorder='big')
+                 name2 = 'Competitor 2'.encode('utf-8')
+                 name2_length = len(name2).to_bytes(4, byteorder='big')
+                 response = b''
+                 random_bits = secrets.token_bytes(32)
+                 hash_value = hashes.Hash(hashes.BLAKE2b(64), backend=default_backend())
+                 hash_value.update(response + random_bits)
+                 digest = hash_value.finalize()
+                 signature = Administrator.admin_private_key.sign(
+                     digest,
+                     padding.PKCS1v15(),
+                     hashes.SHA256()
+                 )
+                 # send the signed response message
+                 response_length = len(response).to_bytes(4, byteorder='big')
+                 signature_length = len(signature).to_bytes(4, byteorder='big')
                 
-                signature = Administrator.admin_private_key.sign(
-                    pickle.dumps(message),
-                    padding.PSS(
-                        mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH
-                    ),
-                    hashes.SHA256()
-                )
-                
-                signature_len = len(bytes.fromhex(signature.hex())).to_bytes(4, byteorder="big")
-                x = [secrets.token_bytes(32), signature_len, bytes.fromhex(signature.hex())]
-                # message = message.extend()
-                print('**SENDING LIST OF VOTERS FOR COLLECTOR1**')
-                for i in x:
-                    message.append(i)
-                self.admin_client(Administrator.collector1_port, pickle.dumps(message))
-                time.sleep(1)
-                print('**SENDING LIST OF VOTERS FOR COLLECTOR2**')
-                self.admin_client(Administrator.collector2_port, pickle.dumps(message))
-                time.sleep(1)
-                print('**COLLECTOR 1 TO INITIALISE PAILIER ONCE ALL COLLECTORS RECEIVE DATA**')
-            client.close()
+                 client.sendall(pickle.dumps([response_length, message_type , election_ID , 
+                                                 C1_host_length , C1_host , C1_port , C1_pk_length , C1_pk,
+                                                 C2_host_length , C2_host , C2_port , C2_pk_length , C2_pk,
+                                                 M , name1_length , name1 , name2_length, name2, random_bits,
+                                                 signature_length, signature]))
+                 with open(f'data/voter{int.from_bytes(voter_id, byteorder="big")}_private_key.pem', "rb") as f:
+                     pem_data = f.read()
+                     voter_private_key = serialization.load_pem_private_key(
+                     pem_data,
+                     password=None
+                 )
+                 public_key = voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+                 public_key_len = len(voter_private_key.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)).to_bytes(4, byteorder="big")
+                 voters.extend([voter_id, public_key_len, public_key])
+                 # voter_pk = voter_private_key.public_key()
+                 if len(voters) == 15:
+                     print('**REGISTRATION PERIOD ENDED**')
+                     print('**GENERATING LIST OF VOTERS FOR COLLECTORS**')
+                     #Generate message for collectors
+                     message = [b'\x05', Administrator.election_id]
+                     for i in range(len(voters)):
+                         message.append(voters[i])
+                    
+                     signature = Administrator.admin_private_key.sign(
+                         pickle.dumps(message),
+                         padding.PSS(
+                             mgf=padding.MGF1(hashes.SHA256()),
+                             salt_length=padding.PSS.MAX_LENGTH
+                         ),
+                         hashes.SHA256()
+                     )
+                    
+                     signature_len = len(bytes.fromhex(signature.hex())).to_bytes(4, byteorder="big")
+                     x = [secrets.token_bytes(32), signature_len, bytes.fromhex(signature.hex())]
+                     # message = message.extend()
+                     print('**SENDING LIST OF VOTERS FOR COLLECTOR1**')
+                     for i in x:
+                         message.append(i)
+                     self.admin_client(Administrator.collector1_port, pickle.dumps(message))
+                     time.sleep(1)
+                     print('**SENDING LIST OF VOTERS FOR COLLECTOR2**')
+                     self.admin_client(Administrator.collector2_port, pickle.dumps(message))
+                     time.sleep(1)
+                     print('**COLLECTOR 1 TO INITIALISE PAILIER ONCE ALL COLLECTORS RECEIVE DATA**')
+                 client.close()
 
-        else:
-            client.send(Administrator.election_id)
-            client.close()
+
+        
 
 
 class Collector():
@@ -449,13 +546,15 @@ class Collector():
         if collector_index == 1:
             self.private_key = collector1_private_key
             self.pk = collector1_private_key.public_key()
-            self.pk_length = len(self.pk)
-            self.port = 8001
+            # self.pk_length = len(self.pk)
+            # key_hash = hashlib.sha256(self.pk)
+            # key_hash = key_hash.digest()
+            # self.key_hash = key_hash
             self.other_C_host_length = len(HOST)
             self.other_C_host = HOST
-            self.other_C_port = 8002
+            self.other_C_port = Administrator.collector2_port
             self.other_C_pk = collector2_private_key.public_key()
-            self.other_C_pk_length = len(self.other_C_pk)
+            # self.other_C_pk_length = len(self.other_C_pk)
             client_thread = threading.Thread(target=self.collector_client)
             server_thread = threading.Thread(target=self.collector_server, args=(self.collector_index, ))
             client_thread.start()
@@ -463,11 +562,13 @@ class Collector():
         else:
             self.private_key = collector2_private_key
             self.pk = collector2_private_key.public_key()
-            self.pk_length = len(self.pk)
-            self.port = 8001
-            self.other_C_host = HOST
+            # self.pk_length = len(self.pk)
+            # key_hash = hashlib.sha256(self.pk)
+            # key_hash = key_hash.digest()
+            # self.key_hash = key_hash
             self.other_C_host_length = len(HOST)
-            self.other_C_port = 8001
+            self.other_C_host = HOST
+            self.other_C_port = Administrator.collector1_port
             self.other_C_pk = collector1_private_key.public_key()
             # self.other_C_pk_length = len(self.other_C_pk)
             client_thread = threading.Thread(target=self.collector_client)
@@ -477,15 +578,20 @@ class Collector():
         
     def collector_server(self, collector_index):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        collector_port = 0000
+        if int(collector_index) == 1:
+            collector_port = 8001
+        else:
+            collector_port = 8002
         try:
-            server.bind((HOST, self.port))
+            server.bind((HOST, collector_port))
         except OSError:
             if int(collector_index) == 1:
-                self.port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
-                collector_port = self.port
+                Administrator.collector1_port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
+                collector_port = Administrator.collector1_port
             else:
-                self.port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
-                collector_port = self.port
+                Administrator.collector2_port = int(input(f"ENTER PORT FOR COLLECTOR{collector_index} SERVER"))
+                collector_port = Administrator.collector2_port
             
             server.bind((HOST, collector_port))
         server.listen(5)
@@ -508,8 +614,71 @@ class Collector():
                 client.close()
             else:
                 print("COLLECTOR 1 RECEIVED VOTER INFO, PREPARING TO INITIALIZE PAILLIER CRYPTO")
+                print("IMPLIMENTING LAS")
+                return
+                # Define the number of voters and permutation values
+                N = 5
+                pi1 = [4, 1, 0, 2, 3]  # Example permutation values starting from 0
+                pub_key, priv_key = paillier.generate_paillier_keypair()
+                n = pub_key.n
+                bytes_needed = (n.bit_length() + 7) // 8 + 1 # calculate number of bytes needed
+                bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
+                n_bytes = n.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
+                len_n = int.to_bytes(len(n))
+                encrypted_perm = [pub_key.encrypt(pi1[i]) for i in range(N)]
 
-                
+                col2_hash = self.other_C_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+                key_hash = hashlib.sha256(col2_hash).digest()
+                message = [b'\x06', key_hash, Collector.election_id, len_n, n]
+
+                # Convert the encrypted permutation values to bytes and calculate their length
+                for v in encrypted_perm:
+                    enc_v = v.ciphertext()
+                    bytes_needed = (enc_v.bit_length() + 7) // 8  # calculate number of bytes needed
+                    bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
+                    enc_v_bytes = enc_v.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
+                    length_prefix = struct.pack('I', bytes_needed)
+                    message.append(length_prefix)
+                    message.append(enc_v_bytes)
+                print(len(message))
+
+                for i in message:
+                    print(type(i))
+                symmetric_key = os.urandom(32)
+
+                # Encrypt the payload using Salsa20
+                cipher = Salsa20.new(key=symmetric_key, nonce=b'\x00'*8)
+                payload = pickle.dumps(message)
+                payload_length = len(payload)
+                payload_encrypted = cipher.encrypt(payload)
+
+                # Encrypt the symmetric key using RSA
+                recipient_public_key = self.other_C_pk
+                key_encrypted = recipient_public_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
+
+                # Sign the message using RSA
+                sender_private_key = self.private_key
+                h = hashlib.blake2b.new(payload_length.to_bytes(4, byteorder='big') + payload_encrypted + key_encrypted)
+                signature = sender_private_key.sign(h)
+
+                # Generate the knowledge proof
+                knowledge_proof = sender_private_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
+                knowledge_proof_length = len(knowledge_proof).to_bytes(4, byteorder='big')
+
+                # Construct the message
+                payload_length = len(payload_encrypted).to_bytes(4, byteorder='big')
+                key_encrypted_length = len(key_encrypted[0]).to_bytes(4, byteorder='big')
+                signature_length = len(signature).to_bytes(4, byteorder='big')
+
+                message = [payload_length, payload_encrypted, key_encrypted_length, key_encrypted[0], signature_length, signature, knowledge_proof_length, knowledge_proof]
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+                # Connect to the server
+                client_socket.connect((self.other_C_host, self.other_C_port))
+
+                # Send the data
+                data = pickle.dumps(message)
+                client_socket.sendall(data)
         
         # voter request shares
         elif data[0] == (b'\x08'):
@@ -566,69 +735,7 @@ class Collector():
             for i in range(len(data)):
                 print(data[i])
 
-    def paillier_and_las_init(self, client):
-        N = 5
-        pi1 = [4, 1, 0, 2, 3]  # Example permutation values starting from 0
-        pub_key, priv_key = paillier.generate_paillier_keypair()
-        n = pub_key.n
-        bytes_needed = (n.bit_length() + 7) // 8 + 1 # calculate number of bytes needed
-        bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
-        n_bytes = n.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
-        len_n = int.to_bytes(len(n))
-        encrypted_perm = [pub_key.encrypt(pi1[i]) for i in range(N)]
-
-        col2_hash = self.other_C_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-        key_hash = hashlib.sha256(col2_hash).digest()
-        message = [b'\x06', key_hash, Collector.election_id, len_n, n]
-
-        # Convert the encrypted permutation values to bytes and calculate their length
-        for v in encrypted_perm:
-            enc_v = v.ciphertext()
-            bytes_needed = (enc_v.bit_length() + 7) // 8  # calculate number of bytes needed
-            bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
-            enc_v_bytes = enc_v.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
-            length_prefix = struct.pack('I', bytes_needed)
-            message.append(length_prefix)
-            message.append(enc_v_bytes)
-        print(len(message))
-
-        for i in message:
-            print(type(i))
-        symmetric_key = os.urandom(32)
-
-        # Encrypt the payload using Salsa20
-        cipher = Salsa20.new(key=symmetric_key, nonce=b'\x00'*8)
-        payload = pickle.dumps(message)
-        payload_length = len(payload)
-        payload_encrypted = cipher.encrypt(payload)
-
-        # Encrypt the symmetric key using RSA
-        recipient_public_key = self.other_C_pk
-        key_encrypted = recipient_public_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
-
-        # Sign the message using RSA
-        sender_private_key = self.private_key
-        h = hashlib.blake2b.new(payload_length.to_bytes(4, byteorder='big') + payload_encrypted + key_encrypted)
-        signature = sender_private_key.sign(h)
-
-        # Generate the knowledge proof
-        knowledge_proof = sender_private_key.encrypt(int.from_bytes(symmetric_key, byteorder='big'))
-        knowledge_proof_length = len(knowledge_proof).to_bytes(4, byteorder='big')
-
-        # Construct the message
-        payload_length = len(payload_encrypted).to_bytes(4, byteorder='big')
-        key_encrypted_length = len(key_encrypted[0]).to_bytes(4, byteorder='big')
-        signature_length = len(signature).to_bytes(4, byteorder='big')
-
-        message = [payload_length, payload_encrypted, key_encrypted_length, key_encrypted[0], signature_length, signature, knowledge_proof_length, knowledge_proof]
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Connect to the server
-        client_socket.connect((self.other_C_host, self.other_C_port))
-
-        # Send the data
-        data = pickle.dumps(message)
-        client.sendall(data)
+            # if 
 
     def collector2_las_server(collector_port):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -672,7 +779,6 @@ if __name__ == '__main__':
     elif service_name == 'collector2':
         collector2 = Collector(2)
     elif service_name.startswith('voter'):
-        print(sys.argv[1][-1])
         vote = Voter(sys.argv[1][-1])
     else:
         print('Invalid service name')
