@@ -90,5 +90,28 @@ def verify(packed_message):
 # print(verify(packed_message))
 # receive(ped_message)
 
-for i in range(1, 6):
-    print(i)
+from phe import paillier
+import pickle
+
+# Generate a Paillier key pair
+public_key, private_key = paillier.generate_paillier_keypair()
+
+# Save the keys to a file
+with open('paillier_keys.pkl', 'wb') as f:
+    pickle.dump((public_key, private_key), f)
+
+# Load the keys from the file
+with open('paillier_keys.pkl', 'rb') as f:
+    public_key, private_key = pickle.load(f)
+
+# Encrypt a number using the public key
+plaintext = 42
+encrypted_number = public_key.encrypt(plaintext)
+
+# Decrypt the encrypted number using the private key
+decrypted_number = private_key.decrypt(encrypted_number)
+
+# Print the results
+print("Plaintext:", plaintext)
+print("Encrypted number:", encrypted_number)
+print("Decrypted number:", decrypted_number)

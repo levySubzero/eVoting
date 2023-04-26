@@ -139,6 +139,7 @@ class Voter():
         print("signature")
 
         print("ELECTION DATA RECEIVED")
+        self.request_shares(1)
         # payload_length = struct.unpack('!I', payload_length_data)[0]
         # # print("size", int.from_bytes(payload_length, byteorder="big"))
         # print("size", payload_length)
@@ -165,8 +166,9 @@ class Voter():
         print("Connecting to collector 2")
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.connect((HOST, port))
-        col_hash = key.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-        key_hash = hashlib.sha256(col_hash).digest()
+        # col_hash = key.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        # key_hash = hashlib.sha256(col_hash).digest()
+        key_hash = hashlib.sha256(key).digest()
         message = [b'\x08', key_hash, Voter.election_id, self.votr_id]
         # Sign the message
         # signature = voter_private_key.sign(
@@ -408,13 +410,13 @@ class Administrator():
                 signature_len = len(bytes.fromhex(signature.hex())).to_bytes(4, byteorder="big")
                 x = [secrets.token_bytes(32), signature_len, bytes.fromhex(signature.hex())]
                 # message = message.extend()
-                print('**SENDING LIST OF VOTERS FOR COLLECTOR1**')
+                print('**SENDING LIST OF VOTERS TO COLLECTOR1**')
                 for i in x:
                     message.append(i)
-                self.admin_client(Administrator.collector1_port, pickle.dumps(message))
+                self.admin_client(8001, pickle.dumps(message))
                 time.sleep(1)
-                print('**SENDING LIST OF VOTERS FOR COLLECTOR2**')
-                self.admin_client(Administrator.collector2_port, pickle.dumps(message))
+                print('**SENDING LIST OF VOTERS TO COLLECTOR2**')
+                self.admin_client(8002, pickle.dumps(message))
                 time.sleep(1)
                 print('**COLLECTOR 1 TO INITIALISE PAILIER ONCE ALL COLLECTORS RECEIVE DATA**')
             client.close()
@@ -429,10 +431,10 @@ class Collector():
     M = 2
     N = 5
     voters_info = []
-    paillier_public_key = ''
 
     def __init__(self, collector_index):
         self.collector_index = collector_index
+        self.paillier_public_key = ''
        
         with open(f"data/collector1_private_key.pem", "rb") as f:
             pem_data = f.read()
@@ -449,13 +451,13 @@ class Collector():
         if collector_index == 1:
             self.private_key = collector1_private_key
             self.pk = collector1_private_key.public_key()
-            self.pk_length = len(self.pk)
+            # self.pk_length = len(self.pk)
             self.port = 8001
             self.other_C_host_length = len(HOST)
             self.other_C_host = HOST
             self.other_C_port = 8002
             self.other_C_pk = collector2_private_key.public_key()
-            self.other_C_pk_length = len(self.other_C_pk)
+            # self.other_C_pk_length = len(self.other_C_pk)
             client_thread = threading.Thread(target=self.collector_client)
             server_thread = threading.Thread(target=self.collector_server, args=(self.collector_index, ))
             client_thread.start()
@@ -463,8 +465,8 @@ class Collector():
         else:
             self.private_key = collector2_private_key
             self.pk = collector2_private_key.public_key()
-            self.pk_length = len(self.pk)
-            self.port = 8001
+            # self.pk_length = len(self.pk)
+            self.port = 8002
             self.other_C_host = HOST
             self.other_C_host_length = len(HOST)
             self.other_C_port = 8001
@@ -489,7 +491,7 @@ class Collector():
             
             server.bind((HOST, collector_port))
         server.listen(5)
-        print(f"COLLECTOR{collector_index} SERVER STARTED at PORT: {collector_port}")
+        print(f"COLLECTOR{collector_index} SERVER STARTED at PORT: {self.port}")
         while True:    
             client, address = server.accept()
             t = threading.Thread(target=self.collector_controller, args=(self.collector_index, client, address))
@@ -506,10 +508,32 @@ class Collector():
             if int(collector_index) == 2:
                 print("COLLECTOR 2 RECEIVED VOTER INFO")
                 client.close()
+                with open('paillier_keys.pkl', 'rb') as f:
+                    public_key, private_key = pickle.load(f)
+                self.paillier_public_key = public_key
             else:
-                print("COLLECTOR 1 RECEIVED VOTER INFO, PREPARING TO INITIALIZE PAILLIER CRYPTO")
-
+                print("COLLECTOR 1 RECEIVED VOTER INFO")
+                client.close()
+                print("INITIALIZING PAILLIER CRYPTOSYSTEM")
+                pub_key, priv_key = paillier.generate_paillier_keypair()
+                print("PAILLIER KEY GENERATED")
+                with open('paillier_keys.pkl', 'wb') as f:
+                    pickle.dump((pub_key, priv_key), f)
+                self.paillier_public_key = pub_key
+                # print(self.paillier_public_key)
+                # pub_key_bytes = pickle.dumps(pub_key)
+                # print(type(pub_key_bytes))
+                # server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                # server.connect((HOST, self.other_C_port))
+                # server.sendall((pickle.dumps([b'PAL', pub_key_bytes])))
+                # server.close()
+                self.paillier_and_las_init(pub_key)
                 
+        elif data[0] == (b'PAL'):
+            print('maform')
+            pk_bytes = data[1]
+            self.paillier_public_key = pickle.loads(pk_bytes)
+            print(self.paillier_public_key)
         
         # voter request shares
         elif data[0] == (b'\x08'):
@@ -563,34 +587,32 @@ class Collector():
         # collector 1 initiate LAS
         else: 
             print("FROM COLLECTOR 1")
+            print(len(data))
             for i in range(len(data)):
                 print(data[i])
 
-    def paillier_and_las_init(self, client):
+    def paillier_and_las_init(self, pub_key):
         N = 5
         pi1 = [4, 1, 0, 2, 3]  # Example permutation values starting from 0
-        pub_key, priv_key = paillier.generate_paillier_keypair()
-        n = pub_key.n
-        bytes_needed = (n.bit_length() + 7) // 8 + 1 # calculate number of bytes needed
-        bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
-        n_bytes = n.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
-        len_n = int.to_bytes(len(n))
+        n_bytes = N.to_bytes((N.bit_length() + 7) // 8, 'big')
+        len_n = len(n_bytes)
         encrypted_perm = [pub_key.encrypt(pi1[i]) for i in range(N)]
 
         col2_hash = self.other_C_pk.public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
         key_hash = hashlib.sha256(col2_hash).digest()
-        message = [b'\x06', key_hash, Collector.election_id, len_n, n]
+        message = [b'\x06', key_hash, Collector.election_id, len_n, n_bytes]
 
         # Convert the encrypted permutation values to bytes and calculate their length
+        perm_vals = []
         for v in encrypted_perm:
             enc_v = v.ciphertext()
             bytes_needed = (enc_v.bit_length() + 7) // 8  # calculate number of bytes needed
             bytes_needed += bytes_needed % 2  # make sure there is an even number of bytes
             enc_v_bytes = enc_v.to_bytes(bytes_needed, byteorder='big', signed=True)  # encode as bytes in big-endian two's complement format
             length_prefix = struct.pack('I', bytes_needed)
-            message.append(length_prefix)
-            message.append(enc_v_bytes)
-        print(len(message))
+            perm_vals.append(length_prefix)
+            perm_vals.append(enc_v_bytes)
+        message += pickle.dumps(perm_vals)
 
         for i in message:
             print(type(i))
@@ -628,7 +650,7 @@ class Collector():
 
         # Send the data
         data = pickle.dumps(message)
-        client.sendall(data)
+        client_socket.sendall(data)
 
     def collector2_las_server(collector_port):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -677,3 +699,5 @@ if __name__ == '__main__':
     else:
         print('Invalid service name')
     
+
+
